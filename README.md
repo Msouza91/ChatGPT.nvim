@@ -3,10 +3,20 @@
 ![GitHub Workflow Status](http://img.shields.io/github/actions/workflow/status/jackMort/ChatGPT.nvim/default.yml?branch=main&style=for-the-badge)
 ![Lua](https://img.shields.io/badge/Made%20with%20Lua-blueviolet.svg?style=for-the-badge&logo=lua)
 
-`ChatGPT` is a Neovim plugin that allows you to interact with OpenAI's GPT-3 language model.
-With `ChatGPT`, you can ask questions and get answers from GPT-3 in real-time.
+`ChatGPT` is a Neovim plugin that allows you to effortlessly utilize the OpenAI ChatGPT API,
+empowering you to generate natural language responses from OpenAI's ChatGPT directly within the editor in response to your inquiries.
 
 ![preview image](https://github.com/jackMort/ChatGPT.nvim/blob/media/preview-2.png?raw=true)
+
+## Features
+- **Interactive Q&A**: Engage in interactive question-and-answer sessions with the powerful gpt model (ChatGPT) using an intuitive interface.
+- **Persona-based Conversations**: Explore various perspectives and have conversations with different personas by selecting prompts from Awesome ChatGPT Prompts.
+- **Code Editing Assistance**: Enhance your coding experience with an interactive editing window powered by the gpt model, offering instructions tailored for coding tasks.
+- **Code Completion**: Enjoy the convenience of code completion similar to GitHub Copilot, leveraging the capabilities of the gpt model to suggest code snippets and completions based on context and programming patterns.
+- **Customizable Actions**: Execute a range of actions utilizing the gpt model, such as grammar correction, translation, keyword generation, docstring creation, test addition, code optimization, summarization, bug fixing, code explanation, Roxygen editing, and code readability analysis. Additionally, you can define your own custom actions using a JSON file.
+
+For a comprehensive understanding of the extension's functionality, you can watch a plugin showcase [video](https://www.youtube.com/watch?v=7k0KZsheLP4)
+
 ## Installation
 
 - Make sure you have `curl` installed.
@@ -17,6 +27,17 @@ The OpenAI API key can be provided in one of the following two ways:
 1. In the configuration option `api_key_cmd`, provide the path and arguments to
    an executable that returns the API key via stdout.
 1. Setting it via an environment variable called `$OPENAI_API_KEY`.
+
+Custom OpenAI API host with the configuration option `api_host_cmd` or
+environment variable called `$OPENAI_API_HOST`. It's useful if you can't access
+OpenAI directly
+
+For Azure deployments, you also need to set environment variables
+`$OPENAI_API_TYPE` to `azure`, `$OPENAI_API_BASE` to your own resource URL,
+e.g. `https://{your-resource-name}.openai.azure.com`, and `$OPENAI_API_AZURE_ENGINE`
+to your deployment ID. Optionally, if you need a different API version,
+set `$OPENAI_API_AZURE_VERSION` as well. Note that edit models have been deprecated
+so they might not work.
 
 ```lua
 -- Packer
@@ -51,147 +72,7 @@ use({
 
 `ChatGPT.nvim` comes with the following defaults, you can override them by passing config as setup param
 
-```lua
-{
-    api_key_cmd = nil,
-    async_api_key_cmd = nil,
-    yank_register = "+",
-    edit_with_instructions = {
-      diff = false,
-      keymaps = {
-        accept = "<C-y>",
-        toggle_diff = "<C-d>",
-        toggle_settings = "<C-o>",
-        cycle_windows = "<Tab>",
-        use_output_as_input = "<C-i>",
-      },
-    },
-    chat = {
-      welcome_message = WELCOME_MESSAGE,
-      loading_text = "Loading, please wait ...",
-      question_sign = "",
-      answer_sign = "ﮧ",
-      max_line_length = 120,
-      sessions_window = {
-        border = {
-          style = "rounded",
-          text = {
-            top = " Sessions ",
-          },
-        },
-        win_options = {
-          winhighlight = "Normal:Normal,FloatBorder:FloatBorder",
-        },
-      },
-      keymaps = {
-        close = { "<C-c>" },
-        yank_last = "<C-y>",
-        yank_last_code = "<C-k>",
-        scroll_up = "<C-u>",
-        scroll_down = "<C-d>",
-        new_session = "<C-n>",
-        cycle_windows = "<Tab>",
-        cycle_modes = "<C-f>",
-        select_session = "<Space>",
-        rename_session = "r",
-        delete_session = "d",
-        draft_message = "<C-d>",
-        toggle_settings = "<C-o>",
-        toggle_message_role = "<C-r>",
-        toggle_system_role_open = "<C-s>",
-      },
-    },
-    popup_layout = {
-      default = "center",
-      center = {
-        width = "80%",
-        height = "80%",
-      },
-      right = {
-        width = "30%",
-        width_settings_open = "50%",
-      },
-    },
-    popup_window = {
-      border = {
-        highlight = "FloatBorder",
-        style = "rounded",
-        text = {
-          top = " ChatGPT ",
-        },
-      },
-      win_options = {
-        wrap = true,
-        linebreak = true,
-        foldcolumn = "1",
-        winhighlight = "Normal:Normal,FloatBorder:FloatBorder",
-      },
-      buf_options = {
-        filetype = "markdown",
-      },
-    },
-    system_window = {
-      border = {
-        highlight = "FloatBorder",
-        style = "rounded",
-        text = {
-          top = " SYSTEM ",
-        },
-      },
-      win_options = {
-        wrap = true,
-        linebreak = true,
-        foldcolumn = "2",
-        winhighlight = "Normal:Normal,FloatBorder:FloatBorder",
-      },
-    },
-    popup_input = {
-      prompt = "  ",
-      border = {
-        highlight = "FloatBorder",
-        style = "rounded",
-        text = {
-          top_align = "center",
-          top = " Prompt ",
-        },
-      },
-      win_options = {
-        winhighlight = "Normal:Normal,FloatBorder:FloatBorder",
-      },
-      submit = "<C-Enter>",
-      submit_n = "<Enter>",
-    },
-    settings_window = {
-      border = {
-        style = "rounded",
-        text = {
-          top = " Settings ",
-        },
-      },
-      win_options = {
-        winhighlight = "Normal:Normal,FloatBorder:FloatBorder",
-      },
-    },
-    openai_params = {
-      model = "gpt-3.5-turbo",
-      frequency_penalty = 0,
-      presence_penalty = 0,
-      max_tokens = 300,
-      temperature = 0,
-      top_p = 1,
-      n = 1,
-    },
-    openai_edit_params = {
-      model = "code-davinci-edit-001",
-      temperature = 0,
-      top_p = 1,
-      n = 1,
-    },
-    actions_paths = {},
-    show_quickfixes_cmd = "Trouble quickfix",
-    predefined_chat_gpt_prompts = "https://raw.githubusercontent.com/f/awesome-chatgpt-prompts/main/prompts.csv",
-  }
-```
+https://github.com/jackMort/ChatGPT.nvim/blob/f1453f588eb47e49e57fa34ac1776b795d71e2f1/lua/chatgpt/config.lua#L10-L182
 
 ### Secrets Management
 
@@ -218,19 +99,13 @@ The following configuration would use GPG to decrypt a local file containing the
 API key
 
 ```lua
+local home = vim.fn.expand("$HOME")
 require("chatgpt").setup({
-    api_key_cmd = "gpg --decrypt ~/secret.txt.gpg 2>/dev/null"
+    api_key_cmd = "gpg --decrypt " .. home .. "/secret.txt.gpg"
 })
 ```
 
-alternatively, you can choose to run this command asynchronously by using the
-`async_api_key_cmd` option instead.
-
-```lua
-require("chatgpt").setup({
-    async_api_key_cmd = "op read op://private/OpenAI/credential --no-newline"
-})
-```
+Note that the `api_key_cmd` arguments are split by whitespace. If you need whitespace inside an argument (for example to reference a path with spaces), you can wrap it in a separate script.
 
 ## Usage
 
@@ -247,9 +122,9 @@ model.
 ![preview image](https://github.com/jackMort/ChatGPT.nvim/blob/media/preview-3.png?raw=true)
 
 #### `ChatGPTEditWithInstructions`
-`ChatGPTEditWithInstructions` command which opens interactive window to edit selected text or whole window using the `code-davinci-edit-002` model (GPT 3.5 fine-tuned for coding).
+`ChatGPTEditWithInstructions` command which opens interactive window to edit selected text or whole window using the `code-davinci-edit-001` model (GPT 3.5 fine-tuned for coding).
 
-You can map it usig the Lua API, e.g. using `which-key.nvim`:
+You can map it using the Lua API, e.g. using `which-key.nvim`:
 ```lua
 local chatgpt = require("chatgpt")
 wk.register({
@@ -316,7 +191,7 @@ An example of custom action may look like this: (`#` marks comments)
   }
 }
 ```
-The `edit` strategy consists in showing the output side by side with the iput and
+The `edit` strategy consists in showing the output side by side with the input and
 available for further editing requests.
 For now, `edit` strategy is implemented for `chat` type only.
 
@@ -330,9 +205,11 @@ keybindings are available:
 - `<C-Enter>` [Both] to submit.
 - `<C-y>` [Both] to copy/yank last answer.
 - `<C-o>` [Both] Toggle settings window.
+- `<C-h>` [Both] Toggle help window.
 - `<Tab>` [Both] Cycle over windows.
-- `<C-m>` [Chat] Cycle over modes (center, stick to right).
-- `<C-c>` [Chat] to close chat window.
+- `<C-f>` [Chat] Cycle over modes (center, stick to right).
+- `<C-c>` [Both] to close chat window.
+- `<C-p>` [Chat] Toggle sessions list.
 - `<C-u>` [Chat] scroll up chat window.
 - `<C-d>` [Chat] scroll down chat window.
 - `<C-k>` [Chat] to copy/yank code from last answer.
@@ -344,7 +221,29 @@ keybindings are available:
 - `<C-d>` [Edit Window] view the diff between left and right panes and use diff-mode
   commands
 
-When the setting window is opened (with `<C-o>`), settigs can be modified by
+When the setting window is opened (with `<C-o>`), settings can be modified by
 pressing `Enter` on the related config. Settings are saved across sections
+
+### Whichkey plugin mappings
+Add these to your [whichkey](https://github.com/folke/which-key.nvim) plugin mappings for convenient binds
+
+```lua
+c = {
+  name = "ChatGPT",
+    c = { "<cmd>ChatGPT<CR>", "ChatGPT" },
+    e = { "<cmd>ChatGPTEditWithInstruction<CR>", "Edit with instruction", mode = { "n", "v" } },
+    g = { "<cmd>ChatGPTRun grammar_correction<CR>", "Grammar Correction", mode = { "n", "v" } },
+    t = { "<cmd>ChatGPTRun translate<CR>", "Translate", mode = { "n", "v" } },
+    k = { "<cmd>ChatGPTRun keywords<CR>", "Keywords", mode = { "n", "v" } },
+    d = { "<cmd>ChatGPTRun docstring<CR>", "Docstring", mode = { "n", "v" } },
+    a = { "<cmd>ChatGPTRun add_tests<CR>", "Add Tests", mode = { "n", "v" } },
+    o = { "<cmd>ChatGPTRun optimize_code<CR>", "Optimize Code", mode = { "n", "v" } },
+    s = { "<cmd>ChatGPTRun summarize<CR>", "Summarize", mode = { "n", "v" } },
+    f = { "<cmd>ChatGPTRun fix_bugs<CR>", "Fix Bugs", mode = { "n", "v" } },
+    x = { "<cmd>ChatGPTRun explain_code<CR>", "Explain Code", mode = { "n", "v" } },
+    r = { "<cmd>ChatGPTRun roxygen_edit<CR>", "Roxygen Edit", mode = { "n", "v" } },
+    l = { "<cmd>ChatGPTRun code_readability_analysis<CR>", "Code Readability Analysis", mode = { "n", "v" } },
+  },
+```
 
 [!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/jackMort)

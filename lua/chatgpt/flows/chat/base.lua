@@ -6,6 +6,7 @@ local ChatInput = require("chatgpt.input")
 local Api = require("chatgpt.api")
 local Config = require("chatgpt.config")
 local Settings = require("chatgpt.settings")
+local Help = require("chatgpt.help")
 local Sessions = require("chatgpt.flows.chat.sessions")
 local Utils = require("chatgpt.utils")
 local Signs = require("chatgpt.signs")
@@ -26,18 +27,25 @@ function Chat:init()
   self.active_panel = nil
   self.selected_message_nsid = vim.api.nvim_create_namespace("ChatGPTNSSM")
 
+  -- quit indicator
+  self.active = true
+
   -- UI ELEMENTS
   self.layout = nil
   self.chat_panel = nil
   self.chat_input = nil
   self.chat_window = nil
   self.sessions_panel = nil
+  self.open_extra_panels = {} -- track open panels
   self.settings_panel = nil
+  self.help_panel = nil
   self.system_role_panel = nil
 
   -- UI OPEN INDICATORS
   self.settings_open = false
   self.system_role_open = false
+
+  self.is_streaming_response = false
 
   self.prompt_lines = 1
 
@@ -90,12 +98,12 @@ function Chat:render_role()
 
   self.role_extmark_id = vim.api.nvim_buf_set_extmark(self.chat_input.bufnr, Config.namespace_id, 0, 0, {
     virt_text = {
-      { "", "ChatGPTTotalTokensBorder" },
+      { Config.options.chat.border_left_sign, "ChatGPTTotalTokensBorder" },
       {
         string.upper(self.role),
         "ChatGPTTotalTokens",
       },
-      { "", "ChatGPTTotalTokensBorder" },
+      { Config.options.chat.border_right_sign, "ChatGPTTotalTokensBorder" },
       { " " },
     },
     virt_text_pos = "right_align",
@@ -144,7 +152,7 @@ function Chat:set_session(session)
 end
 
 function Chat:isBusy()
-  return self.spinner:is_running()
+  return self.spinner:is_running() or self.is_streaming_response
 end
 
 function Chat:add(type, text, usage)
@@ -199,6 +207,80 @@ end
 
 function Chat:addAnswer(text, usage)
   self:add(ANSWER, text, usage)
+end
+
+function Chat:addAnswerPartial(text, state)
+  if state == "ERROR" then
+    return self:addAnswer(text, {})
+  end
+
+  local start_line = 0
+  if self.selectedIndex > 0 then
+    local prev = self.messages[self.selectedIndex]
+    start_line = prev.end_line + (prev.type == ANSWER and 2 or 1)
+  end
+
+  if state == "END" then
+    local usage = {}
+    local idx = self.session:add_item({
+      type = ANSWER,
+      text = text,
+      usage = usage,
+    })
+
+    local lines = {}
+    local nr_of_lines = 0
+    for line in string.gmatch(text, "[^\n]+") do
+      nr_of_lines = nr_of_lines + 1
+      table.insert(lines, line)
+    end
+
+    local end_line = start_line + nr_of_lines - 1
+    table.insert(self.messages, {
+      idx = idx,
+      usage = usage or {},
+      type = ANSWER,
+      text = text,
+      lines = lines,
+      nr_of_lines = nr_of_lines,
+      start_line = start_line,
+      end_line = end_line,
+    })
+    self.selectedIndex = self.selectedIndex + 1
+    vim.api.nvim_buf_set_lines(self.chat_window.bufnr, -1, -1, false, { "", "" })
+    Signs.set_for_lines(self.chat_window.bufnr, start_line, end_line, "chat")
+
+    self.is_streaming_response = false
+  end
+
+  if state == "START" then
+    self.is_streaming_response = true
+
+    self:stopSpinner()
+    self:set_lines(-2, -1, false, { "" })
+    vim.api.nvim_buf_set_option(self.chat_window.bufnr, "modifiable", true)
+  end
+
+  if state == "START" or state == "CONTINUE" then
+    local lines = vim.split(text, "\n", {})
+    local length = #lines
+    local buffer = self.chat_window.bufnr
+    local win = self.chat_window.winid
+
+    for i, line in ipairs(lines) do
+      local currentLine = vim.api.nvim_buf_get_lines(buffer, -2, -1, false)[1]
+      vim.api.nvim_buf_set_lines(buffer, -2, -1, false, { currentLine .. line })
+
+      local last_line_num = vim.api.nvim_buf_line_count(buffer)
+      Signs.set_for_lines(self.chat_window.bufnr, start_line, last_line_num - 1, "chat")
+      if i == length and i > 1 then
+        vim.api.nvim_buf_set_lines(buffer, -1, -1, false, { "" })
+      end
+      if self:is_buf_visiable() then
+        vim.api.nvim_win_set_cursor(win, { last_line_num, 0 })
+      end
+    end
+  end
 end
 
 function Chat:get_total_tokens()
@@ -365,12 +447,12 @@ function Chat:renderLastMessage()
       self.messages[self.selectedIndex].extmark_id =
         vim.api.nvim_buf_set_extmark(self.chat_window.bufnr, Config.namespace_id, msg.end_line + 1, 0, {
           virt_text = {
-            { "", "ChatGPTTotalTokensBorder" },
+            { Config.options.chat.border_left_sign, "ChatGPTTotalTokensBorder" },
             {
               "TOKENS: " .. msg.usage.total_tokens,
               "ChatGPTTotalTokens",
             },
-            { "", "ChatGPTTotalTokensBorder" },
+            { Config.options.chat.border_right_sign, "ChatGPTTotalTokensBorder" },
             { " ", "" },
           },
           virt_text_pos = "right_align",
@@ -402,6 +484,16 @@ function Chat:toString()
   return str
 end
 
+local function createContent(line)
+  local extensions = { "%.jpeg", "%.jpg", "%.png", "%.gif", "%.bmp", "%.tif", "%.tiff", "%.webp" }
+  for _, ext in ipairs(extensions) do
+    if string.find(line:lower(), ext .. "$") then
+      return { type = "image_url", image_url = line }
+    end
+  end
+  return { type = "text", text = line }
+end
+
 function Chat:toMessages()
   local messages = {}
   if self.system_message ~= nil then
@@ -415,7 +507,15 @@ function Chat:toMessages()
     elseif msg.type == ANSWER then
       role = "assistant"
     end
-    table.insert(messages, { role = role, content = msg.text })
+    local content = {}
+    if self.params.model == "gpt-4-vision-preview" then
+      for _, line in ipairs(msg.lines) do
+        table.insert(content, createContent(line))
+      end
+    else
+      content = msg.text
+    end
+    table.insert(messages, { role = role, content = content })
   end
   return messages
 end
@@ -430,6 +530,21 @@ end
 
 function Chat:is_buf_exists()
   return vim.fn.bufexists(self.chat_window.bufnr) == 1
+end
+
+function Chat:is_buf_visiable()
+  -- Get all windows in the current tab
+  local wins = vim.api.nvim_tabpage_list_wins(0)
+  -- Traverse the window list to determine whether the buffer of chat_window is visible in the window
+  local visible = false
+  for _, win in ipairs(wins) do
+    local buf = vim.api.nvim_win_get_buf(win)
+    if buf == self.chat_window.bufnr then
+      visible = true
+      break
+    end
+  end
+  return visible
 end
 
 function Chat:set_lines(start_idx, end_idx, strict_indexing, lines)
@@ -447,8 +562,8 @@ function Chat:add_highlight(hl_group, line, col_start, col_end)
 end
 
 function Chat:set_cursor(pos)
-  if self:is_buf_exists() then
-    vim.api.nvim_win_set_cursor(self.chat_window.winid, pos)
+  if self:is_buf_visiable() then
+    pcall(vim.api.nvim_win_set_cursor, self.chat_window.winid, pos)
   end
 end
 
@@ -466,9 +581,9 @@ function Chat:display_input_suffix(suffix)
   if suffix then
     self.extmark_id = vim.api.nvim_buf_set_extmark(self.chat_input.bufnr, Config.namespace_id, 0, -1, {
       virt_text = {
-        { "", "ChatGPTTotalTokensBorder" },
+        { Config.options.chat.border_left_sign, "ChatGPTTotalTokensBorder" },
         { "" .. suffix, "ChatGPTTotalTokens" },
-        { "", "ChatGPTTotalTokensBorder" },
+        { Config.options.chat.border_right_sign, "ChatGPTTotalTokensBorder" },
         { " ", "" },
       },
       virt_text_pos = "right_align",
@@ -488,7 +603,14 @@ end
 
 function Chat:map(keys, fn, windows, modes)
   if windows == nil or next(windows) == nil then
-    windows = { self.settings_panel, self.sessions_panel, self.system_role_panel, self.chat_input, self.chat_window }
+    windows = {
+      self.help_panel,
+      self.settings_panel,
+      self.sessions_panel,
+      self.system_role_panel,
+      self.chat_input,
+      self.chat_window,
+    }
   end
 
   if modes == nil or next(modes) == nil then
@@ -531,7 +653,7 @@ function Chat:get_layout_params()
   local starting_row = tabline_height == 0 and 0 or 1
 
   local width = Utils.calculate_percentage_width(Config.options.popup_layout.right.width)
-  if self.settings_open then
+  if #self.open_extra_panels > 0 then
     width = width + 40
   end
 
@@ -568,19 +690,32 @@ function Chat:get_layout_params()
 
   local box = Layout.Box({
     left_layout,
-    Layout.Box(self.chat_input, { size = 2 + self.prompt_lines }),
+    Layout.Box(self.chat_input, { size = (self.chat_input.border._.style == "none" and 0 or 2) + self.prompt_lines }),
   }, { dir = "col" })
 
-  if self.settings_open then
+  if #self.open_extra_panels > 0 then
+    local extra_boxes = function()
+      local box_size = (100 / #self.open_extra_panels) .. "%"
+      local boxes = {}
+      for i, panel in ipairs(self.open_extra_panels) do
+        -- for the last panel, make it grow to fill the remaining space
+        if i == #self.open_extra_panels then
+          table.insert(boxes, Layout.Box(panel, { grow = 1 }))
+        else
+          table.insert(boxes, Layout.Box(panel, { size = box_size }))
+        end
+      end
+      return Layout.Box(boxes, { dir = "col", size = 40 })
+    end
     box = Layout.Box({
       Layout.Box({
         left_layout,
-        Layout.Box(self.chat_input, { size = 2 + self.prompt_lines }),
+        Layout.Box(
+          self.chat_input,
+          { size = (self.chat_input.border._.style == "none" and 0 or 2) + self.prompt_lines }
+        ),
       }, { dir = "col", grow = 1 }),
-      Layout.Box({
-        Layout.Box(self.settings_panel, { size = "30%" }),
-        Layout.Box(self.sessions_panel, { grow = 1 }),
-      }, { dir = "col", size = 40 }),
+      extra_boxes(),
     }, { dir = "row" })
   end
 
@@ -589,6 +724,7 @@ end
 
 function Chat:open()
   self.settings_panel = Settings.get_settings_panel("chat_completions", self.params)
+  self.help_panel = Help.get_help_panel("chat")
   self.sessions_panel = Sessions.get_panel(function(session)
     self:set_session(session)
   end)
@@ -598,6 +734,15 @@ function Chat:open()
       self:set_system_message(text)
     end,
   })
+  self.stop = false
+  self.should_stop = function()
+    if self.stop then
+      self.stop = false
+      return true
+    else
+      return false
+    end
+  end
   self.chat_input = ChatInput(Config.options.popup_input, {
     prompt = Config.options.popup_input.prompt,
     on_close = function()
@@ -609,7 +754,7 @@ function Chat:open()
         self:redraw()
       end
     end),
-    on_submit = vim.schedule_wrap(function(value)
+    on_submit = function(value)
       -- clear input
       vim.api.nvim_buf_set_lines(self.chat_input.bufnr, 0, -1, false, { "" })
 
@@ -621,12 +766,12 @@ function Chat:open()
       self:addQuestion(value)
       if self.role == ROLE_USER then
         self:showProgess()
-        local params = vim.tbl_extend("keep", { messages = self:toMessages() }, Settings.params)
-        Api.chat_completions(params, function(answer, usage)
-          self:addAnswer(answer, usage)
-        end)
+        local params = vim.tbl_extend("keep", { stream = true, messages = self:toMessages() }, Settings.params)
+        Api.chat_completions(params, function(answer, state)
+          self:addAnswerPartial(answer, state)
+        end, self.should_stop)
       end
-    end),
+    end,
   })
 
   self.layout = Layout(self:get_layout_params())
@@ -669,37 +814,97 @@ function Chat:open()
     self:scroll(-1)
   end, { self.chat_input })
 
+  -- stop generating
+  self:map(Config.options.chat.keymaps.stop_generating, function()
+    self.stop = true
+  end, { self.chat_input })
+
   -- close
   self:map(Config.options.chat.keymaps.close, function()
     self:hide()
+    -- If current in insert mode, switch to insert mode
+    if vim.fn.mode() == "i" then
+      vim.api.nvim_command("stopinsert")
+    end
   end)
+
+  local function inTable(tbl, item)
+    for key, value in pairs(tbl) do
+      if value == item then
+        return key
+      end
+    end
+    return false
+  end
 
   -- toggle settings
   self:map(Config.options.chat.keymaps.toggle_settings, function()
-    self.settings_open = not self.settings_open
+    local settings_open = inTable(self.open_extra_panels, self.settings_panel)
+    if settings_open then
+      table.remove(self.open_extra_panels, settings_open)
+      settings_open = false
+    else
+      table.insert(self.open_extra_panels, self.settings_panel)
+      settings_open = inTable(self.open_extra_panels, self.settings_panel)
+    end
     self:redraw()
 
-    if self.settings_open then
-      vim.api.nvim_buf_set_option(self.settings_panel.bufnr, "modifiable", false)
-      vim.api.nvim_win_set_option(self.settings_panel.winid, "cursorline", true)
+    if settings_open then
+      vim.api.nvim_buf_set_option(self.open_extra_panels[settings_open].bufnr, "modifiable", false)
+      vim.api.nvim_win_set_option(self.open_extra_panels[settings_open].winid, "cursorline", true)
 
-      self:set_active_panel(self.settings_panel)
+      self:set_active_panel(self.open_extra_panels[settings_open])
     else
       self:set_active_panel(self.chat_input)
     end
+  end)
+
+  -- toggle help
+  self:map(Config.options.chat.keymaps.toggle_help, function()
+    local help_open = inTable(self.open_extra_panels, self.help_panel)
+    if help_open then
+      table.remove(self.open_extra_panels, help_open)
+      help_open = false
+    else
+      table.insert(self.open_extra_panels, self.help_panel)
+      help_open = inTable(self.open_extra_panels, self.help_panel)
+    end
+    self:redraw()
+
+    if help_open then
+      vim.api.nvim_buf_set_option(self.open_extra_panels[help_open].bufnr, "modifiable", false)
+      vim.api.nvim_win_set_option(self.open_extra_panels[help_open].winid, "cursorline", true)
+
+      self:set_active_panel(self.help_panel)
+    else
+      self:set_active_panel(self.chat_input)
+    end
+  end)
+
+  -- toggle sessions
+  self:map(Config.options.chat.keymaps.toggle_sessions, function()
+    local sessions_open = inTable(self.open_extra_panels, self.sessions_panel)
+    if sessions_open then
+      table.remove(self.open_extra_panels, sessions_open)
+    else
+      table.insert(self.open_extra_panels, self.sessions_panel)
+    end
+    self:redraw()
   end)
 
   -- new session
   self:map(Config.options.chat.keymaps.new_session, function()
     self:new_session()
     Sessions:refresh()
-  end, { self.settings_panel, self.chat_input })
+  end, { self.settings_panel, self.chat_input, self.help_panel })
 
   -- cycle panes
   self:map(Config.options.chat.keymaps.cycle_windows, function()
-    if self.active_panel == self.settings_panel then
-      self:set_active_panel(self.sessions_panel)
-    elseif self.active_panel == self.chat_input then
+    local in_table = inTable(self.open_extra_panels, self.active_panel)
+    if not self.active_panel then
+      self:set_active_panel(self.chat_input)
+    end
+    if self.active_panel == self.chat_input then
       if self.system_role_open then
         self:set_active_panel(self.system_role_panel)
       else
@@ -707,8 +912,19 @@ function Chat:open()
       end
     elseif self.active_panel == self.system_role_panel then
       self:set_active_panel(self.chat_window)
-    elseif self.active_panel == self.chat_window and self.settings_open == true then
-      self:set_active_panel(self.settings_panel)
+    elseif self.active_panel == self.chat_window then
+      if #self.open_extra_panels > 0 then
+        self:set_active_panel(self.open_extra_panels[1])
+      else
+        self:set_active_panel(self.chat_input)
+      end
+    elseif in_table then
+      local next_index = (in_table + 1) % (#self.open_extra_panels + 1)
+      if next_index == 0 then
+        self:set_active_panel(self.chat_input)
+      else
+        self:set_active_panel(self.open_extra_panels[next_index])
+      end
     else
       self:set_active_panel(self.chat_input)
     end
@@ -783,6 +999,11 @@ function Chat:open()
   -- initialize
   self.layout:mount()
   self:welcome()
+
+  local event = require("nui.utils.autocmd").event
+  self.chat_input:on(event.QuitPre, function()
+    self.active = false
+  end)
 end
 
 function Chat:open_system_panel()
